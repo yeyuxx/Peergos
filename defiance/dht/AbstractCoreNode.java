@@ -4,11 +4,8 @@ import defiance.util.*;
 import defiance.crypto.PublicKey;
 
 import java.util.*;
-import java.net.*;
 import java.io.*;
-import java.nio.*;
-import java.nio.channels.*;
-
+import java.net.*;
 
 abstract class AbstractCoreNode
 {
@@ -31,14 +28,14 @@ abstract class AbstractCoreNode
             this.address = address;
         }
 
-        public int hashCode(){return key.hashCode() + address.hashCode() * 31;}
+        public int hashCode(){return key.hashCode() + address.hashCode() * 31 + owner.hashCode()*31*31;}
 
         public boolean equals(Object other)
         {
             if (! (other instanceof FragmentData))
                 return false;
             FragmentData f = (FragmentData) other;
-            return this.key.equals(f.key) && this.address.equals(f.address);
+            return this.key.equals(f.key) && this.address.equals(f.address) && this.owner.equals(f.owner);
         }
     }
 
@@ -51,7 +48,9 @@ abstract class AbstractCoreNode
         this.userFragments = new HashMap<String, HashSet<FragmentData> >();
     }
 
-    public synchronized boolean claimUserName(String user, PublicKey key)
+    public abstract void close() throws IOException;
+
+    public synchronized boolean claimUserName(String user)
     {
         if (userFragments.containsKey(user))
             return false;
