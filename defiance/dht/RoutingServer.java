@@ -72,7 +72,10 @@ public class RoutingServer extends Thread
                 {
                     int port = Args.getInt("contactPort", 8080);
                     InetAddress entry = InetAddress.getByName(Args.getParameter("contactIP"));
-                    messenger.join(entry, port);
+                    boolean joined = messenger.join(entry, port);
+                    int joinAttempts = 1;
+                    for (int i=0; (i < joinAttempts) && !joined; i++)
+                        joined = messenger.join(entry, port);
 
                     // send JOIN message to ourselves via contact point
                     Message join = new Message.JOIN(us);
@@ -81,6 +84,11 @@ public class RoutingServer extends Thread
                     // wait for ECHO from nearest neighbour, otherwise retry with new NodeID
                     Message m;
                     try { m = messenger.awaitMessage(1000 * 60); } catch (InterruptedException e) {
+                        System.err.println("Failed to connect to network, timed out.");
+                        return;
+                    }
+                    if (m == null)
+                    {
                         System.err.println("Failed to connect to network, timed out.");
                         return;
                     }
@@ -108,7 +116,7 @@ public class RoutingServer extends Thread
                 }
             }
         // Ready to receive traffic
-        LOGGER.log(Level.ALL, "Successfully joined network.");
+        LOGGER.log(Level.ALL, "Storage server successfully joined DHT.");
         // TODO serialise our ID
 
         while (true)
@@ -604,15 +612,16 @@ public class RoutingServer extends Thread
     {
         if (!Args.hasParameter("script"))
             throw new IllegalStateException("Need a script argument for test mode");
-        int directoryPort = 80;
-        Start.main(new String[] {"-directoryServer", IP.getMyPublicAddress().getHostAddress()+":"+directoryPort});
-        String[] args = new String[]{"-firstNode", "-port", "8000", "-logMessages", "-script", Args.getParameter("script")};
+        String script = Args.getParameter("script");
+        Start.main(new String[] {"-directoryServer"});
+        String[] args = new String[]{"-firstNode", "-port", "8000", "-logMessages", "-script", script};
         Start.main(args);
         args = new String[]{"-port", "", "-logMessages", "-contactIP", IP.getMyPublicAddress().getHostAddress(), "-contactPort", args[2]};
-        for (int i = 0; i < nodes - 1; i++)
-        {
-            args[1] = 9000 + 1000 * i + "";
-            Start.main(args);
-        }
+        if (nodes > 1)
+            for (int i = 0; i < nodes - 1; i++)
+            {
+                args[1] = 9000 + 1000 * i + "";
+                Start.main(args);
+            }
     }
 }

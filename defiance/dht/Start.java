@@ -1,5 +1,7 @@
 package defiance.dht;
 
+import defiance.crypto.SSL;
+import defiance.directory.DirectoryServer;
 import defiance.tests.Scripter;
 import defiance.util.Args;
 
@@ -25,20 +27,34 @@ public class Start
         if (Args.hasParameter("test"))
         {
             RoutingServer.test(Args.getInt("test", 6));
-            return;
         }
-        if (Args.hasParameter("directoryServer"))
+        else if (Args.hasOption("directoryServer"))
         {
-            DirectoryServer.createAndStart();
-            return;
+            String keyfile = Args.getParameter("keyfile", "dir.key");
+            char[] passphrase = Args.getParameter("passphrase", "password").toCharArray();
+            DirectoryServer.createAndStart(keyfile, passphrase, DirectoryServer.PORT);
         }
-        int port = Args.getInt("port", 8080);
-        RoutingServer rs = new RoutingServer(port);
-        rs.start();
-        API api = new API(rs);
-        if (Args.hasParameter("script"))
+        else if (Args.hasOption("rootGen"))
         {
-            new Scripter(api, Args.getParameter("script")).start();
+            SSL.generateAndSaveRootCertificate(Args.getParameter("password").toCharArray());
+        }
+        else if (Args.hasOption("dirGen"))
+        {
+
+            SSL.generateCSR(Args.getParameter("password").toCharArray(), Args.getParameter("keyfile"), "dir.csr");
+        }
+        else if (Args.hasOption("dirSign"))
+        {
+            SSL.signDirectoryCertificate(Args.getParameter("csr"), Args.getParameter("rootPassword").toCharArray());
+        }
+        else {
+            int port = Args.getInt("port", 8000);
+            RoutingServer rs = new RoutingServer(port);
+            rs.start();
+            API api = new API(rs);
+            if (Args.hasParameter("script")) {
+                new Scripter(api, Args.getParameter("script")).start();
+            }
         }
     }
 }

@@ -7,11 +7,13 @@ import defiance.crypto.SSL;
 import defiance.dht.Message;
 import defiance.dht.Messenger;
 import defiance.storage.Storage;
+import org.bouncycastle.operator.OperatorCreationException;
 
 import javax.net.ssl.*;
 import java.io.*;
 import java.net.*;
 import java.security.*;
+import java.security.cert.CertificateException;
 import java.util.concurrent.*;
 import java.util.logging.Level;
 import java.util.logging.Logger;
@@ -39,16 +41,16 @@ public class HTTPSMessenger extends Messenger
     }
 
     @Override
-    public void join(InetAddress addr, int port) throws IOException {
+    public boolean join(InetAddress addr, int port) throws IOException {
         try
         {
             InetAddress us = IP.getMyPublicAddress();
             InetSocketAddress address = new InetSocketAddress(us, localPort);
-            System.out.println("Listening on: " + us.getHostAddress() + ":" + localPort);
+            System.out.println("Starting storage server at: " + us.getHostAddress() + ":" + localPort);
             httpsServer = HttpsServer.create(address, CONNECTION_BACKLOG);
             SSLContext sslContext = SSLContext.getInstance("TLS");
 
-            char[] password = "simulator".toCharArray();
+            char[] password = "storage".toCharArray();
             KeyStore ks = SSL.getKeyStore(password);
 
             KeyManagerFactory kmf = KeyManagerFactory.getInstance("SunX509");
@@ -59,6 +61,7 @@ public class HTTPSMessenger extends Messenger
 
             // setup the HTTPS context and parameters
             sslContext.init(kmf.getKeyManagers(), tmf.getTrustManagers(), null);
+            SSLContext.setDefault(sslContext);
             httpsServer.setHttpsConfigurator(new HttpsConfigurator(sslContext)
             {
                 public void configure(HttpsParameters params)
@@ -83,13 +86,14 @@ public class HTTPSMessenger extends Messenger
                     }
                 }
             } );
-            // now contact network and accept SSL cert from the contact point
-
         }
-        catch (Exception ex)
+        catch (NoSuchAlgorithmException|InvalidKeyException|KeyStoreException|CertificateException|
+                NoSuchProviderException|SignatureException|OperatorCreationException|
+                UnrecoverableKeyException|KeyManagementException ex)
         {
             System.err.println("Failed to create HTTPS port");
             ex.printStackTrace(System.err);
+            return false;
         }
 
         httpsServer.createContext(MESSAGE_URL, new HttpsMessageHandler(this));
@@ -107,6 +111,7 @@ public class HTTPSMessenger extends Messenger
         {
 
         }
+        return true;
     }
 
     protected void queueRequestMessage(Message m)
@@ -157,15 +162,14 @@ public class HTTPSMessenger extends Messenger
     {
         // for now, make a direct connection
         URL target = new URL("https", addr.getHostAddress(), port, key);
-        System.out.println("sending fragment to " + addr.getHostAddress());
+        System.out.println("sending fragment to " + target.toString());
         HttpURLConnection conn = (HttpURLConnection) target.openConnection();
         conn.setDoOutput(true);
-        conn.setRequestMethod("POST");
+        conn.setRequestMethod("PUT");
         OutputStream out = conn.getOutputStream();
         out.write(value);
         out.flush();
         out.close();
-        conn.getResponseCode();
     }
 
     @Override
