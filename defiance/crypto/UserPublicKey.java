@@ -140,4 +140,18 @@ public class UserPublicKey
             hash = User.hash(hash);
         return hash;
     }
+
+    public boolean equals(Object o)
+    {
+        if (! (o instanceof UserPublicKey))
+            return false;
+
+        return this.publicKey.equals(((UserPublicKey) o).publicKey);
+    }
+
+    public int hashCode()
+    {
+        return publicKey.hashCode();
+    }
+
 }
