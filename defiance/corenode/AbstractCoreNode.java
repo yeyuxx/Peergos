@@ -1,7 +1,8 @@
 package defiance.corenode;
 
-import defiance.util.*;
 import defiance.crypto.*;
+
+import java.security.PublicKey;
 
 import java.util.*;
 import java.io.*;
@@ -17,36 +18,49 @@ public abstract class AbstractCoreNode
      */ 
     class UserData
     {
-        private final Map<byte[], byte[]> friends;
+        private final Set<UserPublicKey> friends;
         private final Map<byte[], byte[]> fragments;
-        //fragments shared with this user
-        private final Map<UserPublicKey, Map<byte[], byte[]> > sharedFragments;
 
         UserData()
         {
-            this.friends = new HashMap<byte[], byte[]>();
+            this.friends = new HashSet<UserPublicKey>();
             this.fragments = new HashMap<byte[], byte[]>();
-            this.sharedFragments = new HashMap<UserPublicKey, Map<byte[], byte[]> >();
         }
     }   
 
     protected final Map<UserPublicKey, UserData> userMap;
+    protected final Map<String, UserPublicKey> userNameToPublicKeyMap;
+    protected final Map<UserPublicKey, String> userPublicKeyToNameMap;
 
-    public AbstractCoreNode()
+    public AbstractCoreNode() throws Exception
     {
         this.userMap = new HashMap<UserPublicKey, UserData>();
+        this.userNameToPublicKeyMap = new HashMap<String, UserPublicKey>();
+        this.userPublicKeyToNameMap = new HashMap<UserPublicKey, String>();
     } 
 
     /*
-     * @param encodedPublicKey X509 encoded public key
+     * @param userKey X509 encoded public key
+     * @param signedHash the SHA hash of userKey, signed with the user private key 
+     * @param username the username that is being claimed
      */
-    public boolean addUsername(byte[] encodedPublicKey)
+    public boolean addUsername(byte[] userKey, byte[] signedHash, String username)
     {
-        UserPublicKey key = new UserPublicKey(encodedPublicKey);
+        UserPublicKey key = new UserPublicKey(userKey);
+
+        byte[] hash = key.hash(userKey);
+        byte[] unsignedHash = key.unsignMessage(signedHash);
+
+        if (! Arrays.equals(hash, unsignedHash))
+            return false;
+
         synchronized(this)
         {
-            if (userMap.containsKey(key))
+            if (userNameToPublicKeyMap.containsKey(username))
                 return false;
+
+            userNameToPublicKeyMap.put(username, key); 
+            userPublicKeyToNameMap.put(key, username); 
             userMap.put(key, new UserData());
             return true;
         }
@@ -54,34 +68,44 @@ public abstract class AbstractCoreNode
 
     /*
      * @param userKey X509 encoded key of user that wishes to add a friend
+     * @param signedHash the SHA hash of userKey, signed with the user private key 
      * @param userBencodedkey the X509 encoded key of the new friend user, encoded with userKey
      */
-    public boolean addFriend(byte[] userKey, byte[] userBencodedKey)
+    public boolean addFriend(byte[] userKey, byte[] signedHash, byte[] userBencodedKey)
     {
         UserPublicKey key = new UserPublicKey(userKey);
-        byte[] hash = key.hash(userBencodedKey);
+
+        if (! Arrays.equals(key.hash(userKey),key.unsignMessage(signedHash)))
+            return false;
+
+        UserPublicKey friendKey = new UserPublicKey(userBencodedKey);
 
         synchronized(this)
         {
             UserData userData = userMap.get(key);
 
-            if (userData == null)
+            if (userData == null || userMap.get(friendKey) == null)
                 return false;
-            if (userData.friends.containsKey(hash))
+            if (userData.friends.contains(friendKey))
                 return false;
 
-            userData.friends.put(hash, userBencodedKey);
+            userData.friends.add(friendKey);
             return true; 
         }
     }
 
     /*
      * @param userKey X509 encoded key of user that wishes to add a fragment
+     * @param signedHash the SHA hash of userKey, signed with the user private key 
      * @param encodedFragmentData fragment meta-data encoded with userKey
      */ 
-    public boolean addFragment(byte[] userKey, byte[] encodedFragmentData)
+    public boolean addFragment(byte[] userKey, byte[] signedHash, byte[] encodedFragmentData)
     {
         UserPublicKey key = new UserPublicKey(userKey);
+
+        if (! Arrays.equals(key.hash(userKey),key.unsignMessage(signedHash)))
+            return false;
+
         byte[] hash = key.hash(encodedFragmentData);
 
         synchronized(this)
@@ -100,11 +124,16 @@ public abstract class AbstractCoreNode
 
     /*
      * @param userKey X509 encoded key of user that wishes to add a fragment
+     * @param signedHash the SHA hash of userKey, signed with the user private key 
      * @param hash the hash of the fragment to be removed 
      */ 
-    public boolean removeFragment(byte[] userKey, byte[] hash)
+    public boolean removeFragment(byte[] userKey, byte[] signedHash, byte[] hash)
     {
         UserPublicKey key = new UserPublicKey(userKey);
+
+        if (! Arrays.equals(key.hash(userKey),key.unsignMessage(signedHash)))
+            return false;
+
         synchronized(this)
         {
             UserData userData = userMap.get(key);
@@ -116,114 +145,83 @@ public abstract class AbstractCoreNode
     }
 
     /*
-     * @param userKey X509 encoded key of user that wishes to add a fragment
+     * @param userKey X509 encoded key of user to be removed 
+     * @param signedHash the SHA hash of userKey, signed with the user private key 
+     * @param username to be removed 
      */
-    public boolean removeUserName(byte[] userKey)
+    public boolean removeUsername(byte[] userKey, byte[] signedHash, String username)
     {
         UserPublicKey key = new UserPublicKey(userKey);
+
+        if (! Arrays.equals(key.hash(userKey),key.unsignMessage(signedHash)))
+            return false;
+
         synchronized(this)
         {
-            return userMap.remove(key) != null;
+            userPublicKeyToNameMap.remove(key);
+            userMap.remove(key);
+            return userNameToPublicKeyMap.remove(username) != null;
         }
     }
 
     /*
-     * @param sharerEncodedKey X509 encoded key of user that wishes to share a fragment 
-     * @param recipientEncodedKey X509 encoded key of user that will receive the shared fragment 
-     * @param encodedFragmentData the fragment data encoded with sharerEncodedKey 
+     * @param user the username whose friend list is being checked
+     * @param the friend-username that is being sought in usernames friend-list
      */
-    public boolean addSharedFragment(byte[] sharerEncodedKey, byte[] recipientEncodedKey, byte[] encodedFragmentData) 
+    public boolean hasFriend(String user, String friend)
     {
-        UserPublicKey sharerKey = new UserPublicKey(sharerEncodedKey);
-        UserPublicKey recipientKey = new UserPublicKey(recipientEncodedKey);
-        byte[] hash = recipientKey.hash(encodedFragmentData);
 
         synchronized(this)
         {
-            UserData sharerUserData = userMap.get(sharerKey);
-            UserData recipientUserData = userMap.get(recipientKey);
-
-            if (sharerUserData == null || recipientUserData == null)
+            UserPublicKey userKey = userNameToPublicKeyMap.get(user);
+            UserPublicKey friendKey = userNameToPublicKeyMap.get(friend);
+            if (userKey == null || friendKey == null)
                 return false;
-
-            if (! recipientUserData.sharedFragments.containsKey(sharerKey))
-                recipientUserData.sharedFragments.put(sharerKey, new HashMap<byte[], byte[]>());
-
-            Map<byte[], byte[]> sharedFragments = recipientUserData.sharedFragments.get(sharerKey);
-            if (sharedFragments.containsKey(hash))
-                return false;
-            sharedFragments.put(hash, encodedFragmentData);
-
-            return true;
-        }
-    }
-
-
-
-    /*
-     * @param key X509 encoded key of user that wishes to share a fragment 
-     */
-    public byte[][] getFriends(byte[] key)
-    {
-        UserPublicKey userKey = new UserPublicKey(key);
-        synchronized(this)
-        {
+            
             UserData userData = userMap.get(userKey);
+            return userData.friends.contains(friendKey);
+        }
+
+    }
+    /*
+     * @param userKey X509 encoded key of user that wishes to share a fragment 
+     * @param signedHash the SHA hash of userKey, signed with the user private key 
+     */
+    public Iterator<UserPublicKey> getFriends(byte[] userKey, byte[] signedHash)
+    {
+        UserPublicKey key = new UserPublicKey(userKey);
+        if (! Arrays.equals(key.hash(userKey),key.unsignMessage(signedHash)))
+            return null;
+
+        synchronized(this)
+        {
+            UserData userData = userMap.get(key);
             if (userData == null)
                 return null;
-            
-            int numFriends = userData.friends.size();
-            
-            if (numFriends ==0)
-                return null;
 
-            byte[][] friends = new byte[numFriends][];
-            
-            int pos = 0;
-            for (Iterator<byte[]> it = userData.friends.values().iterator(); it.hasNext();)
-                friends[pos++] = it.next();
-            return friends;
+            return Collections.unmodifiableCollection(userData.friends).iterator();
         }
     } 
 
     /*
-     * @param key X509 encoded key of user that wishes to share a fragment 
+     * @param userKey X509 encoded key of user that wishes to share a fragment 
+     * @param signedHash the SHA hash of userKey, signed with the user private key 
      */
-    public byte[][] getUserFragments(byte[] key)
+    public Iterator<byte[]> getFragments(byte[] userKey, byte[] signedHash)
     {
-        UserPublicKey userKey = new UserPublicKey(key);
+        UserPublicKey key = new UserPublicKey(userKey);
+
+        if (! Arrays.equals(key.hash(userKey),key.unsignMessage(signedHash)))
+            return null; 
+
         synchronized(this)
         {
             UserData userData = userMap.get(userKey);
             if (userData == null)
                 return null;
 
-            int numFragments = userData.fragments.size();
-            
-            if (numFragments ==0)
-                return null;
-
-            byte[][] fragments = new byte[numFragments][];
-            
-            int pos = 0;
-            for (Iterator<byte[]> it = userData.fragments.values().iterator(); it.hasNext();)
-                fragments[pos++] = it.next();
-            return fragments;
+            return Collections.unmodifiableCollection(userData.fragments.values()).iterator();
         }
     }
 
-    /*
-     * @param key X509 encoded key of user that wishes to share a fragment 
-     */
-    public byte[][] getSharedFragments(byte[] key)
-    {
-        UserPublicKey userKey = new UserPublicKey(key);
-        synchronized(this)
-        {
-            UserData userData = userMap.get(userKey);
-            if (userData == null)
-                return null;
-        }
-        return null;
-    }
 }

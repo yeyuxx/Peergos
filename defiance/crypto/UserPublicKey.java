@@ -154,4 +154,9 @@ public class UserPublicKey
         return publicKey.hashCode();
     }
 
+    public PublicKey getKey()
+    {
+        return (PublicKey) publicKey;
+    }
+
 }
