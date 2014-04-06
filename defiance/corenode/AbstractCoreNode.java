@@ -1,6 +1,7 @@
 package defiance.corenode;
 
 import defiance.crypto.*;
+import defiance.util.ByteArrayWrapper;
 
 import java.security.PublicKey;
 
@@ -19,12 +20,12 @@ public abstract class AbstractCoreNode
     class UserData
     {
         private final Set<UserPublicKey> friends;
-        private final Map<byte[], byte[]> fragments;
+        private final Map<ByteArrayWrapper, ByteArrayWrapper> fragments;
 
         UserData()
         {
             this.friends = new HashSet<UserPublicKey>();
-            this.fragments = new HashMap<byte[], byte[]>();
+            this.fragments = new HashMap<ByteArrayWrapper, ByteArrayWrapper>();
         }
     }   
 
@@ -41,17 +42,14 @@ public abstract class AbstractCoreNode
 
     /*
      * @param userKey X509 encoded public key
-     * @param signedHash the SHA hash of userKey, signed with the user private key 
+     * @param signedHash the SHA hash of bytes in the username, signed with the user private key 
      * @param username the username that is being claimed
      */
     public boolean addUsername(byte[] userKey, byte[] signedHash, String username)
     {
         UserPublicKey key = new UserPublicKey(userKey);
 
-        byte[] hash = key.hash(userKey);
-        byte[] unsignedHash = key.unsignMessage(signedHash);
-
-        if (! Arrays.equals(hash, unsignedHash))
+        if (! key.isValidSignature(signedHash, username.getBytes()))
             return false;
 
         synchronized(this)
@@ -68,14 +66,14 @@ public abstract class AbstractCoreNode
 
     /*
      * @param userKey X509 encoded key of user that wishes to add a friend
-     * @param signedHash the SHA hash of userKey, signed with the user private key 
+     * @param signedHash the SHA hash of userBencodedKey, signed with the user private key 
      * @param userBencodedkey the X509 encoded key of the new friend user, encoded with userKey
      */
     public boolean addFriend(byte[] userKey, byte[] signedHash, byte[] userBencodedKey)
     {
         UserPublicKey key = new UserPublicKey(userKey);
 
-        if (! Arrays.equals(key.hash(userKey),key.unsignMessage(signedHash)))
+        if (! key.isValidSignature(signedHash, userBencodedKey))
             return false;
 
         UserPublicKey friendKey = new UserPublicKey(userBencodedKey);
@@ -96,14 +94,14 @@ public abstract class AbstractCoreNode
 
     /*
      * @param userKey X509 encoded key of user that wishes to add a fragment
-     * @param signedHash the SHA hash of userKey, signed with the user private key 
+     * @param signedHash the SHA hash of encodedFragmentData, signed with the user private key 
      * @param encodedFragmentData fragment meta-data encoded with userKey
      */ 
     public boolean addFragment(byte[] userKey, byte[] signedHash, byte[] encodedFragmentData)
     {
         UserPublicKey key = new UserPublicKey(userKey);
 
-        if (! Arrays.equals(key.hash(userKey),key.unsignMessage(signedHash)))
+        if (! key.isValidSignature(signedHash, encodedFragmentData))
             return false;
 
         byte[] hash = key.hash(encodedFragmentData);
@@ -115,23 +113,24 @@ public abstract class AbstractCoreNode
             if (userData == null)
                 return false;
 
-            if (userData.fragments.containsKey(hash))
+            ByteArrayWrapper hashW = new ByteArrayWrapper(hash);
+            if (userData.fragments.containsKey(hashW))
                 return false;
-            userData.fragments.put(hash, encodedFragmentData);
+            userData.fragments.put(hashW, new ByteArrayWrapper(encodedFragmentData));
             return true;
         }
     }
 
     /*
      * @param userKey X509 encoded key of user that wishes to add a fragment
-     * @param signedHash the SHA hash of userKey, signed with the user private key 
      * @param hash the hash of the fragment to be removed 
+     * @param signedHash the SHA hash of hash, signed with the user private key 
      */ 
     public boolean removeFragment(byte[] userKey, byte[] signedHash, byte[] hash)
     {
         UserPublicKey key = new UserPublicKey(userKey);
 
-        if (! Arrays.equals(key.hash(userKey),key.unsignMessage(signedHash)))
+        if (! key.isValidSignature(signedHash, hash))
             return false;
 
         synchronized(this)
@@ -140,20 +139,21 @@ public abstract class AbstractCoreNode
 
             if (userData == null)
                 return false;
-            return userData.fragments.remove(hash) != null;
+            return userData.fragments.remove(new ByteArrayWrapper(hash)) != null;
         }
     }
 
     /*
      * @param userKey X509 encoded key of user to be removed 
-     * @param signedHash the SHA hash of userKey, signed with the user private key 
      * @param username to be removed 
+     * @param signedHash the SHA hash of the bytes that make up username, signed with the user private key 
+     *
      */
     public boolean removeUsername(byte[] userKey, byte[] signedHash, String username)
     {
         UserPublicKey key = new UserPublicKey(userKey);
 
-        if (! Arrays.equals(key.hash(userKey),key.unsignMessage(signedHash)))
+        if (! Arrays.equals(key.hash(username),key.unsignMessage(signedHash)))
             return false;
 
         synchronized(this)
@@ -168,21 +168,17 @@ public abstract class AbstractCoreNode
      * @param user the username whose friend list is being checked
      * @param the friend-username that is being sought in usernames friend-list
      */
-    public boolean hasFriend(String user, String friend)
+    public synchronized  boolean hasFriend(String user, String friend)
     {
+        UserPublicKey userKey = userNameToPublicKeyMap.get(user);
+        UserPublicKey friendKey = userNameToPublicKeyMap.get(friend);
+        if (userKey == null || friendKey == null)
+            return false;
 
-        synchronized(this)
-        {
-            UserPublicKey userKey = userNameToPublicKeyMap.get(user);
-            UserPublicKey friendKey = userNameToPublicKeyMap.get(friend);
-            if (userKey == null || friendKey == null)
-                return false;
-            
-            UserData userData = userMap.get(userKey);
-            return userData.friends.contains(friendKey);
-        }
-
+        UserData userData = userMap.get(userKey);
+        return userData.friends.contains(friendKey);
     }
+
     /*
      * @param userKey X509 encoded key of user that wishes to share a fragment 
      * @param signedHash the SHA hash of userKey, signed with the user private key 
@@ -190,9 +186,8 @@ public abstract class AbstractCoreNode
     public Iterator<UserPublicKey> getFriends(byte[] userKey, byte[] signedHash)
     {
         UserPublicKey key = new UserPublicKey(userKey);
-        if (! Arrays.equals(key.hash(userKey),key.unsignMessage(signedHash)))
+        if (! key.isValidSignature(signedHash, userKey))
             return null;
-
         synchronized(this)
         {
             UserData userData = userMap.get(key);
@@ -207,16 +202,15 @@ public abstract class AbstractCoreNode
      * @param userKey X509 encoded key of user that wishes to share a fragment 
      * @param signedHash the SHA hash of userKey, signed with the user private key 
      */
-    public Iterator<byte[]> getFragments(byte[] userKey, byte[] signedHash)
+    public Iterator<ByteArrayWrapper> getFragments(byte[] userKey, byte[] signedHash)
     {
         UserPublicKey key = new UserPublicKey(userKey);
-
-        if (! Arrays.equals(key.hash(userKey),key.unsignMessage(signedHash)))
-            return null; 
-
+        if (! key.isValidSignature(signedHash, userKey))
+            return null;
+        
         synchronized(this)
         {
-            UserData userData = userMap.get(userKey);
+            UserData userData = userMap.get(key);
             if (userData == null)
                 return null;
 

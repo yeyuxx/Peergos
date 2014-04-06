@@ -5,6 +5,7 @@ import static org.junit.Assert.*;
 
 import defiance.crypto.*;
 import defiance.corenode.*;
+import defiance.util.ByteArrayWrapper;
 
 import org.junit.Test;
 
@@ -37,7 +38,7 @@ public class CoreNode
 
         UserPublicKey userPrivateKey = new UserPublicKey(keyPair.getPrivate());
         byte[] hash = userPrivateKey.hash(userPublicKey.getPublicKey());
-        byte[] signedHash = userPrivateKey.encryptMessageFor(hash); 
+        byte[] signedHash = userPrivateKey.encryptMessageFor(userPrivateKey.hash(username.getBytes())); 
         //
         //add to coreNode
         //
@@ -55,10 +56,13 @@ public class CoreNode
         //
         //add to user 
         //
-        boolean fragmentAdded = coreNode.addFragment(userPublicKey.getPublicKey(), signedHash, cipherText);
+        boolean fragmentAdded = coreNode.addFragment(userPublicKey.getPublicKey(), userPrivateKey.encryptMessageFor(userPublicKey.hash(cipherText)), cipherText);
         assertTrue("successfully added fragment", fragmentAdded);
 
-        Iterator<byte[]> userFragments = coreNode.getFragments(userPublicKey.getPublicKey(), signedHash);
+        byte[] encoded = userPublicKey.getPublicKey();
+        Iterator<ByteArrayWrapper> userFragments = coreNode.getFragments(encoded, userPrivateKey.encryptMessageFor(userPublicKey.hash(encoded)));
+        
+        assertTrue("found fragments", userFragments != null);
         //
         //get back message
         //
@@ -66,7 +70,7 @@ public class CoreNode
         if (userFragments != null)
             while(userFragments.hasNext())
             {
-                byte[] plainText = user.decryptMessage(userFragments.next());
+                byte[] plainText = user.decryptMessage(userFragments.next().data);
                 if (Arrays.equals(plainText, fragmentData))
                     foundFragment = true;
             }
@@ -77,31 +81,30 @@ public class CoreNode
         //
         KeyPair friendKeyPair = SSL.generateKeyPair();
         UserPublicKey friendPublicKey = new UserPublicKey(friendKeyPair.getPublic());
+        UserPublicKey friendPrivateKey = new UserPublicKey(friendKeyPair.getPrivate());
         User friend = new User(friendKeyPair);
         String friendname = "FRIEND";
 
-        UserPublicKey friendPrivateKey = new UserPublicKey(friendKeyPair.getPrivate());
-        byte[] friendHash = friendPrivateKey.hash(friendPublicKey.getPublicKey());
-        byte[] friendSignedHash = friendPrivateKey.encryptMessageFor(friendHash); 
         //
         //add friend to corenode
         //
-        boolean friendAdded = coreNode.addUsername(friendPublicKey.getPublicKey(), signedHash,friendname);
+        boolean friendAdded = coreNode.addUsername(friendPublicKey.getPublicKey(), new byte[0],friendname);
 
         assertFalse("successfully failed validation test", friendAdded);
 
-        friendAdded = coreNode.addUsername(friendPublicKey.getPublicKey(), friendSignedHash,friendname);
+        friendAdded = coreNode.addUsername(friendPublicKey.getPublicKey(), friendPrivateKey.encryptMessageFor(friendPublicKey.hash(friendname)),friendname);
         assertTrue("successfully added friend", friendAdded);
 
         //
         //user adds friend to his friend list
         //
-        boolean userAddedFriend = coreNode.addFriend(userPublicKey.getPublicKey(), signedHash, friendPublicKey.getPublicKey());
+        byte[] encodedFriend = friendPublicKey.getPublicKey();
+        boolean userAddedFriend = coreNode.addFriend(userPublicKey.getPublicKey(),  userPrivateKey.encryptMessageFor(userPublicKey.hash(encodedFriend)), encodedFriend);
         assertTrue("userA successfully added friend to friend-list", userAddedFriend);
         
         boolean hasFriend = coreNode.hasFriend(username, friendname);
         assertTrue("has friend", hasFriend);
-
+        System.out.println("MADE IT");
 
     }
 

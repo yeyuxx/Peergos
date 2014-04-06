@@ -159,4 +159,16 @@ public class UserPublicKey
         return (PublicKey) publicKey;
     }
 
+    public boolean isValidSignature(byte[] signedHash, byte[] raw)
+    {
+        try
+        {
+            byte[] a = hash(raw);
+            byte[] b = unsignMessage(signedHash);
+            return java.util.Arrays.equals(a,b); 
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
 }
