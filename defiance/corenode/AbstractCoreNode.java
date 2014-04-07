@@ -19,12 +19,12 @@ public abstract class AbstractCoreNode
      */ 
     class UserData
     {
-        private final Set<UserPublicKey> friends;
+        private final Set<ByteArrayWrapper> friends;
         private final Map<ByteArrayWrapper, ByteArrayWrapper> fragments;
 
         UserData()
         {
-            this.friends = new HashSet<UserPublicKey>();
+            this.friends = new HashSet<ByteArrayWrapper>();
             this.fragments = new HashMap<ByteArrayWrapper, ByteArrayWrapper>();
         }
     }   
@@ -39,6 +39,11 @@ public abstract class AbstractCoreNode
         this.userNameToPublicKeyMap = new HashMap<String, UserPublicKey>();
         this.userPublicKeyToNameMap = new HashMap<UserPublicKey, String>();
     } 
+    
+    public synchronized UserPublicKey getPublicKey(String username)
+    {
+        return userNameToPublicKeyMap.get(username);
+    }
 
     /*
      * @param userKey X509 encoded public key
@@ -67,27 +72,27 @@ public abstract class AbstractCoreNode
     /*
      * @param userKey X509 encoded key of user that wishes to add a friend
      * @param signedHash the SHA hash of userBencodedKey, signed with the user private key 
-     * @param userBencodedkey the X509 encoded key of the new friend user, encoded with userKey
+     * @param encodedFriendName the bytes of the friendname sined with userKey 
      */
-    public boolean addFriend(byte[] userKey, byte[] signedHash, byte[] userBencodedKey)
+    public boolean addFriend(byte[] userKey, byte[] signedHash, byte[] encodedFriendName)
     {
         UserPublicKey key = new UserPublicKey(userKey);
 
-        if (! key.isValidSignature(signedHash, userBencodedKey))
+        if (! key.isValidSignature(signedHash, encodedFriendName))
             return false;
 
-        UserPublicKey friendKey = new UserPublicKey(userBencodedKey);
+        ByteArrayWrapper b = new ByteArrayWrapper(encodedFriendName);
 
         synchronized(this)
         {
             UserData userData = userMap.get(key);
 
-            if (userData == null || userMap.get(friendKey) == null)
+            if (userData == null)
                 return false;
-            if (userData.friends.contains(friendKey))
+            if (userData.friends.contains(b))
                 return false;
 
-            userData.friends.add(friendKey);
+            userData.friends.add(b);
             return true; 
         }
     }
@@ -165,25 +170,10 @@ public abstract class AbstractCoreNode
     }
 
     /*
-     * @param user the username whose friend list is being checked
-     * @param the friend-username that is being sought in usernames friend-list
-     */
-    public synchronized  boolean hasFriend(String user, String friend)
-    {
-        UserPublicKey userKey = userNameToPublicKeyMap.get(user);
-        UserPublicKey friendKey = userNameToPublicKeyMap.get(friend);
-        if (userKey == null || friendKey == null)
-            return false;
-
-        UserData userData = userMap.get(userKey);
-        return userData.friends.contains(friendKey);
-    }
-
-    /*
      * @param userKey X509 encoded key of user that wishes to share a fragment 
      * @param signedHash the SHA hash of userKey, signed with the user private key 
      */
-    public Iterator<UserPublicKey> getFriends(byte[] userKey, byte[] signedHash)
+    public Iterator<ByteArrayWrapper> getFriends(byte[] userKey, byte[] signedHash)
     {
         UserPublicKey key = new UserPublicKey(userKey);
         if (! key.isValidSignature(signedHash, userKey))

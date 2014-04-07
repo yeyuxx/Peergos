@@ -98,13 +98,23 @@ public class CoreNode
         //
         //user adds friend to his friend list
         //
-        byte[] encodedFriend = friendPublicKey.getPublicKey();
-        boolean userAddedFriend = coreNode.addFriend(userPublicKey.getPublicKey(),  userPrivateKey.encryptMessageFor(userPublicKey.hash(encodedFriend)), encodedFriend);
+        byte[] signedEncodedFriend = userPublicKey.encryptMessageFor(friendname.getBytes());
+
+        boolean userAddedFriend = coreNode.addFriend(userPublicKey.getPublicKey(),  userPrivateKey.encryptMessageFor(userPublicKey.hash(signedEncodedFriend)), signedEncodedFriend);
         assertTrue("userA successfully added friend to friend-list", userAddedFriend);
         
-        boolean hasFriend = coreNode.hasFriend(username, friendname);
-        assertTrue("has friend", hasFriend);
-        System.out.println("MADE IT");
+        Iterator<ByteArrayWrapper> it = coreNode.getFriends(encoded, userPrivateKey.encryptMessageFor(userPublicKey.hash(encoded)));
+        assertTrue("got friends ", it != null);
+
+        boolean foundFriend = false;
+        while (it.hasNext())
+        {
+            ByteArrayWrapper b = it.next();
+            byte[] unsigned = userPrivateKey.unsignMessage(b.data);
+            if (java.util.Arrays.equals(unsigned, friendname.getBytes()))
+                foundFriend = true;
+        }
+        assertTrue("found friend", foundFriend);
 
     }
 
