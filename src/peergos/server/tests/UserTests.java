@@ -622,7 +622,50 @@ public abstract class UserTests {
 
     }
 
+    @Test
+    public void copyTest() throws Exception {
+        String username = generateUsername();
+        String password = "test01";
+        UserContext context = ensureSignedUp(username, password, network, crypto);
+        FileTreeNode userRoot = context.getUserRoot().get();
+        List<String> directoryNames = Arrays.asList("a", "b", "c");
+        for (String dirName : directoryNames)
+            userRoot.mkdir(dirName,context.network, false, context.crypto.random).get();
 
+        Set<String> foundChildren = userRoot.getChildren(context.network).get().stream()
+                .map(e -> e.getFileProperties().name)
+                .collect(Collectors.toSet());
+
+        List<String> missingDirs = directoryNames.stream()
+                .filter(e -> !foundChildren.contains(e))
+                .collect(Collectors.toList());
+
+        Assert.assertTrue("Missing directories " +missingDirs+ " is empty.", missingDirs.isEmpty());
+
+
+        FileTreeNode aChild = userRoot.getChild("a", context.network)
+                .get()
+                .orElseThrow(() -> new IllegalStateException("Missing 'a' directory!"));
+
+        FileTreeNode bChild  = userRoot.getChild("b", context.network)
+                .get()
+                .orElseThrow(() -> new IllegalStateException("Missing 'b' directory!"));
+
+        // b/a is missing
+        Assert.assertFalse(bChild.getChild("a", context.network).get().isPresent());
+
+        //copy b to a/b
+        //todo MAKE THIS PASS
+        FileTreeNode copied = bChild.copyTo(aChild, context.network, context.crypto.random).get();
+
+        // a/b is present
+        Assert.assertTrue("a/b has been copied",
+                aChild.getChild("b", network)
+                        .get()
+                        .isPresent());
+
+
+    }
 
     public static String randomString() {
         return UUID.randomUUID().toString();

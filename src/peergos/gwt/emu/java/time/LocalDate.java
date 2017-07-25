@@ -55,7 +55,7 @@ public class LocalDate {
         }catch(Exception e){
     		
     	}
-        throw new DateTimeParseException("Unable to parse:" + text);
+        throw new DateTimeParseException("Unable to parse:" + text, "", -1);
     }
     
     public static LocalDate now(Clock clock) {

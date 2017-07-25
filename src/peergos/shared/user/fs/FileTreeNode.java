@@ -693,6 +693,7 @@ public class FileTreeNode {
                         RetrievedFilePointer newRetrievedFilePointer = new RetrievedFilePointer(newRFP, newAccess);
                         FileTreeNode newFileTreeNode = new FileTreeNode(newRetrievedFilePointer, target.getOwner(),
                                 Collections.emptySet(), Collections.emptySet(), target.getEntryWriterKey());
+                        //todo: make-dirty?
                         return target.addLinkTo(newFileTreeNode, network, random);
                     });
         });
