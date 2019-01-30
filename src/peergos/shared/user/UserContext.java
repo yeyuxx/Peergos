@@ -357,14 +357,14 @@ public class UserContext {
                                             .thenCompose(readCaps -> {
                                                 readCaps.getRetrievedCapabilities().stream().forEach(rc -> {
                                                     sharedWithCache.addSharedWith(SharedWithCache.Access.READ,
-                                                            rc.path, friendDirectory.getName());
+                                                            rc.cap, friendDirectory.getName());
                                                 });
                                                 return CapabilityStore.loadWriteAccessSharingLinks(homeDirSupplier, friendDirectory,
                                                         this.username, network, crypto.random, fragmenter, false)
                                                         .thenApply(writeCaps -> {
                                                             writeCaps.getRetrievedCapabilities().stream().forEach(rc -> {
                                                                 sharedWithCache.addSharedWith(SharedWithCache.Access.WRITE,
-                                                                        rc.path, friendDirectory.getName());
+                                                                        rc.cap, friendDirectory.getName());
                                                             });
                                                             return true;});
                                             });
@@ -847,6 +847,7 @@ public class UserContext {
         return unShareWriteAccess(path, Collections.singleton(writerToRemove));
     }
 
+    //TODO should take a FileWrapper
     public CompletableFuture<Boolean> unShareWriteAccess(Path path, Set<String> writersToRemove) {
         String pathString = path.toString();
         String absolutePathString = pathString.startsWith("/") ? pathString : "/" + pathString;
@@ -856,12 +857,13 @@ public class UserContext {
                     .thenCompose(parent ->
                             toUnshare.makeDirty(network, crypto.random, parent.get())
                                     .thenCompose(markedDirty -> {
-                                        sharedWithCache.removeSharedWith(SharedWithCache.Access.WRITE, absolutePathString, writersToRemove);
-                                        return shareWriteAccessWith(path, sharedWithCache.getSharedWith(SharedWithCache.Access.WRITE, absolutePathString));
+                                        sharedWithCache.removeSharedWith(SharedWithCache.Access.WRITE, toUnshare.getPointer().capability, writersToRemove);
+                                        return shareWriteAccess(toUnshare, sharedWithCache.getSharedWith(SharedWithCache.Access.WRITE, toUnshare.getPointer().capability));
                                     }));
         });
     }
 
+    //TODO should take a FileWrapper
     public CompletableFuture<Boolean> unShareReadAccess(Path path, Set<String> readersToRemove) {
         String pathString = path.toString();
         String absolutePathString = pathString.startsWith("/") ? pathString : "/" + pathString;
@@ -872,32 +874,20 @@ public class UserContext {
                     .thenCompose(parent ->
                             toUnshare.makeDirty(network, crypto.random, parent.get())
                                     .thenCompose(markedDirty -> {
-                                        sharedWithCache.removeSharedWith(SharedWithCache.Access.READ, absolutePathString, readersToRemove);
-                                        return shareReadAccessWith(path, sharedWithCache.getSharedWith(SharedWithCache.Access.READ, absolutePathString));
+                                        sharedWithCache.removeSharedWith(SharedWithCache.Access.READ, toUnshare.getPointer().capability, readersToRemove);
+                                        return shareReadAccess(toUnshare, sharedWithCache.getSharedWith(SharedWithCache.Access.READ, toUnshare.getPointer().capability));
                                     }));
         });
     }
 
     @JsMethod
     public CompletableFuture<Pair<Set<String>, Set<String>>> sharedWith(FileWrapper file) {
-        return file.getPath(network).thenCompose(path -> {
-            Set<String> sharedReadAccessWith = sharedWithCache.getSharedWith(SharedWithCache.Access.READ, path);
-            Set<String> sharedWriteAccessWith = sharedWithCache.getSharedWith(SharedWithCache.Access.WRITE, path);
+            Set<String> sharedReadAccessWith = sharedWithCache.getSharedWith(SharedWithCache.Access.READ, file.getPointer().capability);
+            Set<String> sharedWriteAccessWith = sharedWithCache.getSharedWith(SharedWithCache.Access.WRITE, file.getPointer().capability);
             return CompletableFuture.completedFuture(new Pair<>(sharedReadAccessWith, sharedWriteAccessWith));
-        });
     }
 
-    public CompletableFuture<Boolean> shareReadAccessWith(Path path, Set<String> readersToAdd) {
-        return getByPath(path.toString())
-                .thenCompose(file -> shareReadAccessWithAll(file.orElseThrow(() -> new IllegalStateException("Could not find path " + path.toString())), readersToAdd));
-    }
-
-    public CompletableFuture<Boolean> shareWriteAccessWith(Path path, Set<String> writersToAdd) {
-        return getByPath(path.toString())
-                .thenCompose(file -> shareWriteAccessWithAll(file.orElseThrow(() -> new IllegalStateException("Could not find path " + path.toString())), writersToAdd));
-    }
-
-    public CompletableFuture<Boolean> shareReadAccessWithAll(FileWrapper file, Set<String> readersToAdd) {
+    public CompletableFuture<Boolean> shareReadAccess(FileWrapper file, Set<String> readersToAdd) {
         BiFunction<FileWrapper, FileWrapper, CompletableFuture<Boolean>> sharingFunction = (sharedDir, fileWrapper) ->
                 CapabilityStore.addReadOnlySharingLinkTo(sharedDir, fileWrapper.getPointer().capability,
                         network, crypto.random, fragmenter)
@@ -915,7 +905,7 @@ public class UserContext {
         });
     }
 
-    public CompletableFuture<Boolean> shareWriteAccessWithAll(FileWrapper file, Set<String> writersToAdd) {
+    public CompletableFuture<Boolean> shareWriteAccess(FileWrapper file, Set<String> writersToAdd) {
         return file.getPath(network).thenCompose(path -> {
             String parentPath = Paths.get(path).getParent().toString();
             return getByPath(parentPath).thenCompose(parentOpt -> {
@@ -968,26 +958,24 @@ public class UserContext {
 
     private CompletableFuture<Boolean> updatedSharedWithCache(FileWrapper file, Set<String> usersToAdd,
                                                               SharedWithCache.Access access) {
-        return file.getPath(network).thenCompose(path -> {
-            sharedWithCache.addSharedWith(access, path, usersToAdd);
-            CompletableFuture<Boolean> res = new CompletableFuture<>();
-            res.complete(true);
-            return res;
-        });
+        sharedWithCache.addSharedWith(access, file.getPointer().capability, usersToAdd);
+        CompletableFuture<Boolean> res = new CompletableFuture<>();
+        res.complete(true);
+        return res;
     }
 
     @JsMethod
     public CompletableFuture<Boolean> shareReadAccessWith(FileWrapper file, String usernameToGrantReadAccess) {
         Set<String> readersToAdd = new HashSet<>();
         readersToAdd.add(usernameToGrantReadAccess);
-        return shareReadAccessWithAll(file, readersToAdd);
+        return shareReadAccess(file, readersToAdd);
     }
 
     @JsMethod
     public CompletableFuture<Boolean> shareWriteAccessWith(FileWrapper file, String usernameToGrantWriteAccess) {
         Set<String> readersToAdd = new HashSet<>();
         readersToAdd.add(usernameToGrantWriteAccess);
-        return shareWriteAccessWithAll(file, readersToAdd);
+        return shareWriteAccess(file, readersToAdd);
     }
 
     public CompletableFuture<Boolean> shareAccessWith(FileWrapper file, String usernameToGrantAccess,

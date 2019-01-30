@@ -1,5 +1,8 @@
 package peergos.shared.user;
 
+import peergos.shared.user.fs.AbsoluteCapability;
+
+import java.io.ByteArrayOutputStream;
 import java.util.HashSet;
 import java.util.Map;
 import java.util.Set;
@@ -9,59 +12,67 @@ public class SharedWithCache {
 
     public enum Access { READ, WRITE }
 
-    private Map<String, Set<String>> sharedWithReadAccessCache = new ConcurrentHashMap<>(); //path to friends
-    private Map<String, Set<String>> sharedWithWriteAccessCache = new ConcurrentHashMap<>();
+    private Map<byte[], Set<String>> sharedWithReadAccessCache = new ConcurrentHashMap<>(); //path to friends
+    private Map<byte[], Set<String>> sharedWithWriteAccessCache = new ConcurrentHashMap<>();
 
     public SharedWithCache() {
 
     }
 
-    private String canonicalisePath(String path) {
-        return path.startsWith("/") ? path : "/" + path;
+    private byte[] generateKey(AbsoluteCapability cap) {
+        ByteArrayOutputStream os = new ByteArrayOutputStream();
+        try {
+            os.write(cap.owner.toBytes());
+            os.write(cap.getMapKey());
+        }catch (Exception e) {
+            e.printStackTrace();
+        }
+        return os.toByteArray();
     }
 
-    public Set<String> getSharedWith(Access access, String path) {
+    public Set<String> getSharedWith(Access access, AbsoluteCapability cap) {
         return access == Access.READ ?
-            getSharedWith(sharedWithReadAccessCache, path) : getSharedWith(sharedWithWriteAccessCache, path);
+            getSharedWith(sharedWithReadAccessCache, cap) : getSharedWith(sharedWithWriteAccessCache, cap);
     }
 
-    private synchronized Set<String> getSharedWith(Map<String, Set<String>> cache, String path) {
-        return new HashSet<>(cache.computeIfAbsent(path, k -> new HashSet<>()));
+    private synchronized Set<String> getSharedWith(Map<byte[], Set<String>> cache, AbsoluteCapability cap) {
+
+        return new HashSet<>(cache.computeIfAbsent(generateKey(cap), k -> new HashSet<>()));
     }
 
-    public void addSharedWith(Access access, String path, String name) {
+    public void addSharedWith(Access access, AbsoluteCapability cap, String name) {
         Set<String> names = new HashSet<>();
         names.add(name);
-        addSharedWith(access, path, names);
+        addSharedWith(access, cap, names);
     }
 
-    public void addSharedWith(Access access, String path, Set<String> names) {
+    public void addSharedWith(Access access, AbsoluteCapability cap, Set<String> names) {
         if(access == Access.READ) {
-            addCacheEntry(sharedWithReadAccessCache, path, names);
+            addCacheEntry(sharedWithReadAccessCache, cap, names);
         } else if(access == Access.WRITE){
-            addCacheEntry(sharedWithWriteAccessCache, path, names);
+            addCacheEntry(sharedWithWriteAccessCache, cap, names);
         }
     }
 
-    private synchronized void addCacheEntry(Map<String, Set<String>> cache, String path, Set<String> names) {
-        cache.computeIfAbsent(canonicalisePath(path), k -> new HashSet<>()).addAll(names);
+    private synchronized void addCacheEntry(Map<byte[], Set<String>> cache, AbsoluteCapability cap, Set<String> names) {
+        cache.computeIfAbsent(generateKey(cap), k -> new HashSet<>()).addAll(names);
     }
 
-    public void clearSharedWith(String path) {
-        sharedWithReadAccessCache.computeIfPresent(canonicalisePath(path), (k, v) -> new HashSet<>());
-        sharedWithWriteAccessCache.computeIfPresent(canonicalisePath(path), (k, v) -> new HashSet<>());
+    public void clearSharedWith(AbsoluteCapability cap) {
+        sharedWithReadAccessCache.computeIfPresent(generateKey(cap), (k, v) -> new HashSet<>());
+        sharedWithWriteAccessCache.computeIfPresent(generateKey(cap), (k, v) -> new HashSet<>());
     }
 
-    public void removeSharedWith(Access access, String path, Set<String> names) {
+    public void removeSharedWith(Access access, AbsoluteCapability cap, Set<String> names) {
         if(access == Access.READ) {
-            removeCacheEntry(sharedWithReadAccessCache, path, names);
+            removeCacheEntry(sharedWithReadAccessCache, cap, names);
         } else if(access == Access.WRITE){
-            removeCacheEntry(sharedWithWriteAccessCache, path, names);
+            removeCacheEntry(sharedWithWriteAccessCache, cap, names);
         }
     }
 
-    private synchronized void removeCacheEntry(Map<String, Set<String>> cache, String path, Set<String> names) {
-        cache.computeIfAbsent(canonicalisePath(path), k -> new HashSet<>()).removeAll(names);
+    private synchronized void removeCacheEntry(Map<byte[], Set<String>> cache, AbsoluteCapability cap, Set<String> names) {
+        cache.computeIfAbsent(generateKey(cap), k -> new HashSet<>()).removeAll(names);
     }
 
 }

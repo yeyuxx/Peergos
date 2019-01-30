@@ -105,7 +105,7 @@ public class PeergosNetworkUtils {
 
         // share the file from sharer to each of the sharees
         FileWrapper u1File = sharerUser.getByPath(sharerUser.username + "/" + filename).get().get();
-        sharerUser.shareReadAccessWith(Paths.get(sharerUser.username, filename), shareeUsers.stream().map(u -> u.username).collect(Collectors.toSet())).get();
+        sharerUser.shareReadAccess(u1File, shareeUsers.stream().map(u -> u.username).collect(Collectors.toSet())).get();
 
         // check other users can read the file
         for (UserContext userContext : shareeUsers) {
@@ -216,7 +216,7 @@ public class PeergosNetworkUtils {
         String originalFilePath = sharer.username + "/" + folderName + "/" + filename;
 
         // file is uploaded, do the actual sharing
-        boolean finished = sharer.shareReadAccessWithAll(updatedFolder, shareeUsers.stream().map(c -> c.username).collect(Collectors.toSet())).get();
+        boolean finished = sharer.shareReadAccess(updatedFolder, shareeUsers.stream().map(c -> c.username).collect(Collectors.toSet())).get();
 
         // check each user can see the shared folder and directory
         for (UserContext sharee : shareeUsers) {
@@ -310,7 +310,7 @@ public class PeergosNetworkUtils {
         FileWrapper folder = sharer.getByPath(path).get().get();
 
         // file is uploaded, do the actual sharing
-        boolean finished = sharer.shareWriteAccessWithAll(folder, shareeUsers.stream().map(c -> c.username).collect(Collectors.toSet())).get();
+        boolean finished = sharer.shareWriteAccess(folder, shareeUsers.stream().map(c -> c.username).collect(Collectors.toSet())).get();
 
         // check each user can see the shared folder, and write to it
         for (UserContext sharee : shareeUsers) {

@@ -70,21 +70,19 @@ public class MultiUserTests {
 
     @Test
     public void safeCopyOfFriendsReadAccess() throws Exception {
-        TriFunction<UserContext, UserContext, String, CompletableFuture<Boolean>> readAccessSharingFunction =
-                (u1, u2, filename) ->
-        u1.shareReadAccessWith(Paths.get(u1.username, filename), Collections.singleton(u2.username));
+        TriFunction<UserContext, UserContext, FileWrapper, CompletableFuture<Boolean>> readAccessSharingFunction =
+                (u1, u2, file) -> u1.shareReadAccessWith(file, u2.username);
         safeCopyOfFriends(readAccessSharingFunction);
     }
 
     @Test
     public void safeCopyOfFriendsWriteAccess() throws Exception {
-        TriFunction<UserContext, UserContext, String, CompletableFuture<Boolean>> writeAccessSharingFunction =
-                (u1, u2, filename) ->
-                        u1.shareWriteAccessWith(Paths.get(u1.username, filename), Collections.singleton(u2.username));
+        TriFunction<UserContext, UserContext, FileWrapper, CompletableFuture<Boolean>> writeAccessSharingFunction =
+                (u1, u2, file) -> u1.shareWriteAccessWith(file, u2.username);
         safeCopyOfFriends(writeAccessSharingFunction);
     }
 
-    private void safeCopyOfFriends(TriFunction<UserContext, UserContext, String, CompletableFuture<Boolean>> sharingFunction) throws Exception {
+    private void safeCopyOfFriends(TriFunction<UserContext, UserContext, FileWrapper, CompletableFuture<Boolean>> sharingFunction) throws Exception {
         UserContext u1 = PeergosNetworkUtils.ensureSignedUp(random(), "a", network.clear(), crypto);
         UserContext u2 = PeergosNetworkUtils.ensureSignedUp(random(), "b", network.clear(), crypto);
 
@@ -112,7 +110,7 @@ public class MultiUserTests {
 
         // share the file from "a" to each of the others
         FileWrapper u1File = u1.getByPath(u1.username + "/" + filename).get().get();
-        sharingFunction.apply(u1, u2, filename).get();
+        sharingFunction.apply(u1, u2, u1File).get();
 
         // check other user can read the file
         FileWrapper sharedFile = u2.getByPath(u1.username + "/" + filename).get().get();
@@ -135,21 +133,21 @@ public class MultiUserTests {
 
     @Test
     public void shareTwoFilesWithSameNameReadAccess() throws Exception {
-        TriFunction<UserContext, List<UserContext>, Path, CompletableFuture<Boolean>> readAccessSharingFunction =
-                (u1, userContexts, path) ->
-                        u1.shareReadAccessWith(path, userContexts.stream().map(u -> u.username).collect(Collectors.toSet()));
+        TriFunction<UserContext, List<UserContext>, FileWrapper, CompletableFuture<Boolean>> readAccessSharingFunction =
+                (u1, userContexts, file) ->
+                        u1.shareReadAccess(file, userContexts.stream().map(u -> u.username).collect(Collectors.toSet()));
         shareTwoFilesWithSameName(readAccessSharingFunction);
     }
 
     @Test
     public void shareTwoFilesWithSameNameWriteAccess() throws Exception {
-        TriFunction<UserContext, List<UserContext>, Path, CompletableFuture<Boolean>> writeAccessSharingFunction =
-                (u1, userContexts, path) ->
-                        u1.shareWriteAccessWith(path, userContexts.stream().map(u -> u.username).collect(Collectors.toSet()));
+        TriFunction<UserContext, List<UserContext>, FileWrapper, CompletableFuture<Boolean>> writeAccessSharingFunction =
+                (u1, userContexts, file) ->
+                        u1.shareWriteAccess(file, userContexts.stream().map(u -> u.username).collect(Collectors.toSet()));
         shareTwoFilesWithSameName(writeAccessSharingFunction);
     }
 
-    private void shareTwoFilesWithSameName(TriFunction<UserContext, List<UserContext>, Path, CompletableFuture<Boolean>> sharingFunction) throws Exception {
+    private void shareTwoFilesWithSameName(TriFunction<UserContext, List<UserContext>, FileWrapper, CompletableFuture<Boolean>> sharingFunction) throws Exception {
         UserContext u1 = PeergosNetworkUtils.ensureSignedUp(random(), "a", network.clear(), crypto);
 
         // send follow requests from each other user to "a"
@@ -187,12 +185,13 @@ public class MultiUserTests {
         subdir.uploadFile(filename, file2Reader, data2.length,
                 u1.network, u1.crypto.random,l -> {}, u1.fragmenter()).get();
 
+        FileWrapper file1 = u1.getByPath(u1.username + "/" + filename).get().get();
+
         // share the file from "a" to each of the others
-        //        sharingFunction.apply(u1, u2, filenameu1.shareReadAccessWith(Paths.get(u1.username, filename), userContexts.stream().map(u -> u.username).collect(Collectors.toSet())).get();
+        sharingFunction.apply(u1, userContexts, file1).get();
 
-        sharingFunction.apply(u1, userContexts, Paths.get(u1.username, filename)).get();
-
-        sharingFunction.apply(u1, userContexts, Paths.get(u1.username, "subdir", filename)).get();
+        FileWrapper file2 = u1.getByPath(u1.username + "/subdir/" + filename).get().get();
+        sharingFunction.apply(u1, userContexts, file2).get();
 
         // check other users can read the file
         for (UserContext userContext : userContexts) {
@@ -256,7 +255,7 @@ public class MultiUserTests {
                 u1.network, u1.crypto.random,l -> {}, u1.fragmenter()).get();
 
         Path filePath = Paths.get(u1.username, subdirName, filename);
-        u1.shareWriteAccessWith(filePath, userContexts.stream().map(u -> u.username).collect(Collectors.toSet()));
+        u1.shareWriteAccess(uploaded, userContexts.stream().map(u -> u.username).collect(Collectors.toSet()));
 
         // check other users can read the file
         for (UserContext userContext : userContexts) {
@@ -330,7 +329,7 @@ public class MultiUserTests {
         // share the file from "a" to each of the others
         String originalPath = u1.username + "/" + filename;
         FileWrapper u1File = u1.getByPath(originalPath).get().get();
-        u1.shareReadAccessWith(Paths.get(u1.username, filename), friends.stream().map(u -> u.username).collect(Collectors.toSet()));
+        u1.shareReadAccess(u1File, friends.stream().map(u -> u.username).collect(Collectors.toSet()));
 
         // check other users can read the file
         for (UserContext friend : friends) {
