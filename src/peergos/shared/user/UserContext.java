@@ -52,6 +52,8 @@ public class UserContext {
 
     private final TransactionService transactionService;
 
+    private final WriteSynchronizer writeSynchronizer;
+
     // The root of the global filesystem as viewed by this context
     @JsProperty
     public TrieNode entrie; // ba dum che!
@@ -82,6 +84,7 @@ public class UserContext {
         this.entrie = entrie;
         this.sharedWithCache = new SharedWithCache();
         this.transactionService = buildTransactionService();
+        this.writeSynchronizer = network.synchronizer;
     }
 
     private TransactionService buildTransactionService() {
@@ -957,25 +960,24 @@ public class UserContext {
      * @param network
      * @return The hashed new signing pair
      */
-    public static CompletableFuture<SigningPrivateKeyAndPublicHash> addOwnedKeyToParent(PublicKeyHash owner,
-                                                                                        SigningPrivateKeyAndPublicHash parentSigner,
-                                                                                        SigningKeyPair newSignerPair,
-                                                                                        NetworkAccess network) {
+    public CompletableFuture<SigningPrivateKeyAndPublicHash> addOwnedKeyToParent(PublicKeyHash owner,
+                                                                                           SigningPrivateKeyAndPublicHash parentSigner,
+                                                                                           SigningKeyPair newSignerPair,
+                                                                                           NetworkAccess network) {
         return IpfsTransaction.call(owner,
                 tid -> network.dhtClient.putSigningKey(
                         parentSigner.secret.signatureOnly(newSignerPair.publicSigningKey.serialize()),
                         owner, parentSigner.publicKeyHash, newSignerPair.publicSigningKey, tid).thenCompose(newSignerHash ->
-                        WriterData.getWriterData(owner, parentSigner.publicKeyHash, network.mutable, network.dhtClient)
-                                .thenCompose(wd -> {
+                        writeSynchronizer.getCurrentWriterData(owner, parentSigner.publicKeyHash, wd -> {
                                     SigningPrivateKeyAndPublicHash newSigner =
                                             new SigningPrivateKeyAndPublicHash(newSignerHash, newSignerPair.secretSigningKey);
                                     Set<OwnerProof> ownedKeys = new HashSet<>(wd.props.ownedKeys);
                                     ownedKeys.add(OwnerProof.build(newSigner, parentSigner.publicKeyHash));
                                     WriterData updatedParentWD = wd.props.withOwnedKeys(ownedKeys);
-                                    return updatedParentWD.commit(owner,
-                                            parentSigner, wd.hash, network, tid)
-                                            .thenApply(x -> newSigner);
-                                })), network.dhtClient);
+                                    return updatedParentWD.commit(owner, parentSigner, wd.hash, network, tid);
+                                }).thenApply(cwd -> newSignerHash)
+                        ).thenApply(newSignerHash -> new SigningPrivateKeyAndPublicHash(newSignerHash, newSignerPair.secretSigningKey))
+                , network.dhtClient);
     }
 
     /**
@@ -986,13 +988,12 @@ public class UserContext {
      * @param network
      * @return The hashed new signing pair
      */
-    public static CompletableFuture<CommittedWriterData> removeOwnedKeyFromParent(PublicKeyHash owner,
-                                                                                             SigningPrivateKeyAndPublicHash parentSigner,
-                                                                                             PublicKeyHash toRemove,
-                                                                                             NetworkAccess network) {
+    public CompletableFuture<CommittedWriterData> removeOwnedKeyFromParent(PublicKeyHash owner,
+                                                                                  SigningPrivateKeyAndPublicHash parentSigner,
+                                                                                  PublicKeyHash toRemove,
+                                                                                  NetworkAccess network) {
         return IpfsTransaction.call(owner,
-                tid -> WriterData.getWriterData(owner, parentSigner.publicKeyHash, network.mutable, network.dhtClient)
-                        .thenCompose(wd -> {
+                tid -> writeSynchronizer.getCurrentWriterData(owner, parentSigner.publicKeyHash, wd -> {
                             Set<OwnerProof> ownedKeys = wd.props.ownedKeys;
                             Set<OwnerProof> updatedOwnedKeys = ownedKeys.stream()
                                     .filter(p -> !p.ownedKey.equals(toRemove))
