@@ -24,6 +24,10 @@ public class WriteSynchronizer {
         this.dht = dht;
     }
 
+    public void put(PublicKeyHash writer, CommittedWriterData val) {
+        pending.put(writer, new AsyncLock<>(CompletableFuture.completedFuture(val)));
+    }
+
     private CompletableFuture<CommittedWriterData> getWriterData(PublicKeyHash controller, MaybeMultihash hash) {
         if (!hash.isPresent())
             return CompletableFuture.completedFuture(new CommittedWriterData(MaybeMultihash.empty(), WriterData.createEmpty(controller)));

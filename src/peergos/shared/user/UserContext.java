@@ -47,7 +47,6 @@ public class UserContext {
     private final BoxingKeyPair boxer;
     private final SymmetricKey rootKey;
 
-    private final AsyncLock<CommittedWriterData> userData;
     private SharedWithCache sharedWithCache;
 
     private final TransactionService transactionService;
@@ -72,7 +71,7 @@ public class UserContext {
                        SymmetricKey rootKey,
                        NetworkAccess network,
                        Crypto crypto,
-                       CompletableFuture<CommittedWriterData> userData,
+                       CommittedWriterData userData,
                        TrieNode entrie) {
         this.username = username;
         this.signer = signer;
@@ -80,11 +79,11 @@ public class UserContext {
         this.rootKey = rootKey;
         this.network = network;
         this.crypto = crypto;
-        this.userData = new AsyncLock<>(userData);
         this.entrie = entrie;
         this.sharedWithCache = new SharedWithCache();
         this.transactionService = buildTransactionService();
         this.writeSynchronizer = network.synchronizer;
+        writeSynchronizer.put(signer.publicKeyHash, userData);
     }
 
     private TransactionService buildTransactionService() {
@@ -178,7 +177,7 @@ public class UserContext {
                                         userWithRoot.getRoot(),
                                         network.withCorenode(tofu),
                                         crypto,
-                                        CompletableFuture.completedFuture(new CommittedWriterData(MaybeMultihash.of(pair.left), userData)),
+                                        new CommittedWriterData(MaybeMultihash.of(pair.left), userData),
                                         root);
                                 tofu.setContext(result);
                                 return result.getUsernameClaimExpiry()
@@ -256,7 +255,7 @@ public class UserContext {
                                 userWithRoot.getRoot(),
                                 network,
                                 crypto,
-                                CompletableFuture.completedFuture(notCommitted),
+                                notCommitted,
                                 TrieNodeImpl.empty());
 
                         LOG.info("Creating user's root directory");
@@ -294,8 +293,7 @@ public class UserContext {
         }
         EntryPoint entry = new EntryPoint(cap, "");
         WriterData empty = WriterData.createEmpty(cap.owner);
-        CommittedWriterData committed = new CommittedWriterData(MaybeMultihash.empty(), empty);
-        CompletableFuture<CommittedWriterData> userData = CompletableFuture.completedFuture(committed);
+        CommittedWriterData userData = new CommittedWriterData(MaybeMultihash.empty(), empty);
         UserContext context = new UserContext(null, null, null, null, network.clear(), crypto, userData, TrieNodeImpl.empty());
         return context.addEntryPoint(null, context.entrie, entry, network, crypto.random, crypto.hasher).thenApply(trieNode -> {
             context.entrie = trieNode;
@@ -340,17 +338,18 @@ public class UserContext {
 
     private CompletableFuture<UserContext> init(SymmetricKey rootKey, Consumer<String> progressCallback) {
         progressCallback.accept("Retrieving Friends");
-        return userData.getValue()
-                .thenCompose(wd -> createFileTree(entrie, username, rootKey, wd.props, network, crypto.random, crypto.hasher)
+        return writeSynchronizer.getCurrentWriterData(signer.publicKeyHash, signer.publicKeyHash,
+                    wd -> createFileTree(entrie, username, rootKey, wd.props, network, crypto.random, crypto.hasher)
                         .thenCompose(root -> {
                             this.entrie = root;
                             return getByPath("/" + username + "/" + "shared")
-                                    .thenCompose(sharedOpt -> {
+                                    .thenApply(sharedOpt -> {
                                         if (!sharedOpt.isPresent())
                                             throw new IllegalStateException("Couldn't find shared folder!");
-                                        return buildSharedWithCache(sharedOpt.get(), this::getUserRoot).thenApply(res -> res);
-                                    }).thenApply(res -> this);
-                        }));
+                                        return buildSharedWithCache(sharedOpt.get(), this::getUserRoot);
+                                    });
+                        }).thenApply(b -> wd)
+                ).thenApply(res -> this);
     }
 
     public CompletableFuture<Boolean> buildSharedWithCache(FileWrapper sharedFolder, Supplier<CompletableFuture<FileWrapper>> homeDirSupplier) {
@@ -512,30 +511,33 @@ public class UserContext {
                                                 newPublicSigningKey,
                                                 tid),
                                         network.dhtClient
-                                ).thenCompose(newSignerHash -> userData.runWithLock(wd -> wd.props.changeKeys(
-                                        signer,
-                                        new SigningPrivateKeyAndPublicHash(newSignerHash, updatedUser.getUser().secretSigningKey),
-                                        wd.hash,
-                                        updatedUser.getBoxingPair().publicBoxingKey,
-                                        existingUser.getRoot(),
-                                        updatedUser.getRoot(),
-                                        newAlgorithm,
-                                        network
-                                )).thenCompose(writerData -> {
-                                    SigningPrivateKeyAndPublicHash newUser =
-                                            new SigningPrivateKeyAndPublicHash(newSignerHash, updatedUser.getUser().secretSigningKey);
-                                    return network.coreNode.getChain(username).thenCompose(existing -> {
-                                        List<Multihash> storage = existing.get(existing.size() - 1).claim.storageProviders;
-                                        List<UserPublicKeyLink> claimChain = UserPublicKeyLink.createChain(signer, newUser, username, expiry, storage);
-                                        return network.coreNode.updateChain(username, claimChain)
-                                                .thenCompose(updatedChain -> {
-                                                    if (!updatedChain)
-                                                        throw new IllegalStateException("Couldn't register new public keys during password change!");
+                                ).thenCompose(newSignerHash ->
+                                     writeSynchronizer.getCurrentWriterData(signer.publicKeyHash, signer.publicKeyHash, wd ->
+                                        wd.props.changeKeys(
+                                                signer,
+                                                new SigningPrivateKeyAndPublicHash(newSignerHash, updatedUser.getUser().secretSigningKey),
+                                                wd.hash,
+                                                updatedUser.getBoxingPair().publicBoxingKey,
+                                                existingUser.getRoot(),
+                                                updatedUser.getRoot(),
+                                                newAlgorithm,
+                                                network)
+                                    ).thenCompose(writerData -> {
+                                        SigningPrivateKeyAndPublicHash newUser =
+                                                new SigningPrivateKeyAndPublicHash(newSignerHash, updatedUser.getUser().secretSigningKey);
+                                        return network.coreNode.getChain(username).thenCompose(existing -> {
+                                            List<Multihash> storage = existing.get(existing.size() - 1).claim.storageProviders;
+                                            List<UserPublicKeyLink> claimChain = UserPublicKeyLink.createChain(signer, newUser, username, expiry, storage);
+                                            return network.coreNode.updateChain(username, claimChain)
+                                                    .thenCompose(updatedChain -> {
+                                                        if (!updatedChain)
+                                                            throw new IllegalStateException("Couldn't register new public keys during password change!");
 
-                                                    return UserContext.ensureSignedUp(username, newPassword, network, crypto);
-                                                });
-                                    });
-                                }));
+                                                        return UserContext.ensureSignedUp(username, newPassword, network, crypto);
+                                                    });
+                                        });
+                                    })
+                                );
                             });
                 });
     }
@@ -598,20 +600,15 @@ public class UserContext {
 
     private CompletableFuture<CommittedWriterData> addOwnedKeyAndCommit(SigningPrivateKeyAndPublicHash owned,
                                                                         TransactionId tid) {
-        return userData.runWithLock(wd -> {
-            Set<OwnerProof> updated = Stream.concat(
-                    wd.props.ownedKeys.stream(),
-                    Stream.of(OwnerProof.build(owned, signer.publicKeyHash))
-            ).collect(Collectors.toSet());
-
-            WriterData writerData = wd.props.withOwnedKeys(updated);
-            return writerData.commit(signer.publicKeyHash, signer, wd.hash, network, tid);
+        return writeSynchronizer.getCurrentWriterData(signer.publicKeyHash, signer.publicKeyHash, wd -> {
+            return wd.props.addOwnedKey(OwnerProof.build(owned, signer.publicKeyHash))
+                    .commit(signer.publicKeyHash, signer, wd.hash, network, tid);
         });
     }
 
     public CompletableFuture<CommittedWriterData> addNamedOwnedKeyAndCommit(String keyName,
                                                                             SigningPrivateKeyAndPublicHash owned) {
-        return userData.runWithLock(wd -> {
+        return writeSynchronizer.getCurrentWriterData(signer.publicKeyHash, signer.publicKeyHash, wd -> {
             WriterData writerData = wd.props.addNamedKey(keyName, OwnerProof.build(owned, signer.publicKeyHash));
             return IpfsTransaction.call(signer.publicKeyHash,
                     tid -> writerData.commit(signer.publicKeyHash, signer, wd.hash, network, tid),
@@ -622,7 +619,7 @@ public class UserContext {
     public CompletableFuture<CommittedWriterData> makePublic(FileWrapper file) {
         if (! file.getOwnerName().equals(username))
             return Futures.errored(new IllegalStateException("Only the owner of a file can make it public!"));
-        return userData.runWithLock(wd -> file.getPath(network).thenCompose(path -> {
+        return writeSynchronizer.getCurrentWriterData(signer.publicKeyHash, signer.publicKeyHash, wd -> file.getPath(network).thenCompose(path -> {
             ensureAllowedToShare(file, username, false);
             return IpfsTransaction.call(signer.publicKeyHash,
                     tid -> {
@@ -684,12 +681,12 @@ public class UserContext {
     }
 
     private CompletableFuture<Set<String>> getFollowers(SymmetricKey rootKey) {
-        return userData.getValue()
+        return writeSynchronizer.getCurrentWriterData(signer.publicKeyHash, signer.publicKeyHash, wd -> CompletableFuture.completedFuture(wd))
                 .thenApply(wd -> wd.props.staticData.get()
                         .getEntryPoints(rootKey)
                         .stream()
                         .map(e -> e.ownerName)
-                        .filter(name -> ! name.equals(username))
+                        .filter(name -> !name.equals(username))
                         .collect(Collectors.toSet()));
     }
 
@@ -1044,7 +1041,8 @@ public class UserContext {
     }
 
     private synchronized CompletableFuture<TrieNode> addToStaticDataAndCommit(TrieNode root, EntryPoint entry) {
-        return userData.runWithLock(wd -> {
+
+        return writeSynchronizer.getCurrentWriterData(signer.publicKeyHash, signer.publicKeyHash, wd -> {
             Optional<UserStaticData> updated = wd.props.staticData.map(sd -> {
                 List<EntryPoint> entryPoints = sd.getEntryPoints(rootKey);
                 entryPoints.add(entry);
@@ -1059,7 +1057,8 @@ public class UserContext {
     }
 
     private CompletableFuture<CommittedWriterData> removeFromStaticData(FileWrapper fileWrapper) {
-        return userData.runWithLock(wd -> wd.props.removeFromStaticData(fileWrapper, rootKey, signer, wd.hash, network));
+        return writeSynchronizer.getCurrentWriterData(signer.publicKeyHash, signer.publicKeyHash, wd ->
+                wd.props.removeFromStaticData(fileWrapper, rootKey, signer, wd.hash, network));
     }
 
     private CompletableFuture<List<BlindFollowRequest>> getFollowRequests() {
