@@ -83,7 +83,9 @@ public class UserContext {
         this.sharedWithCache = new SharedWithCache();
         this.transactionService = buildTransactionService();
         this.writeSynchronizer = network.synchronizer;
-        writeSynchronizer.put(signer.publicKeyHash, userData);
+        if(signer != null) {
+            writeSynchronizer.put(signer.publicKeyHash, userData);
+        }
     }
 
     private TransactionService buildTransactionService() {
@@ -617,6 +619,7 @@ public class UserContext {
     }
 
     public CompletableFuture<CommittedWriterData> makePublic(FileWrapper file) {
+
         if (! file.getOwnerName().equals(username))
             return Futures.errored(new IllegalStateException("Only the owner of a file can make it public!"));
         return writeSynchronizer.getCurrentWriterData(signer.publicKeyHash, signer.publicKeyHash, wd -> file.getPath(network).thenCompose(path -> {
